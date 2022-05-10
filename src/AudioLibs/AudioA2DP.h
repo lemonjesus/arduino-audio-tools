@@ -14,6 +14,8 @@
 #include "BluetoothA2DPSource.h"
 #include "AudioTools/AudioStreams.h"
 
+#include "esp_avrc_api.h"
+
 namespace audio_tools {
 
 /**
@@ -70,6 +72,8 @@ class A2DPConfig {
         const char* name = "A2DP"; 
         bool auto_reconnect = false;
         int bufferSize = A2DP_BUFFER_SIZE * A2DP_BUFFER_COUNT;
+        void (*passthrough_event_callback)(uint8_t, uint8_t) = nullptr;
+        QueueHandle_t passthrough_event_queue = xQueueCreate(10, sizeof(esp_avrc_tg_cb_param_t::avrc_tg_psth_cmd_param));
 };
 
 
@@ -144,6 +148,7 @@ class A2DPStream : public AudioStream {
                     a2dp_source->set_auto_reconnect(cfg.auto_reconnect);
                     a2dp_source->set_volume(volume * 100);
                     a2dp_source->set_on_connection_state_changed(a2dpStateCallback, this);
+                    a2dp_source->set_passthrough_event_queue(cfg.passthrough_event_queue);
                     a2dp_source->start((char*)cfg.name, a2dp_stream_source_sound_data);  
                     while(!a2dp_source->is_connected()){
                         LOGD("waiting for connection");
@@ -299,6 +304,13 @@ class A2DPStream : public AudioStream {
                  is_a2dp_active = true;
             } 
             LOGW("==> state: %s", self->a2dp->to_str(state));
+        }
+
+        static void a2dpPassthroughCallback(uint8_t key_code, uint8_t key_state, void *caller) {
+            LOGD(LOG_METHOD);
+            A2DPStream *self = (A2DPStream*)caller;
+            if(self->config.passthrough_event_callback)
+                self->config.passthrough_event_callback(key_code, key_state);
         }
 
         bool lockSemaphore(bool locked, bool immediate=false){
