@@ -69,11 +69,12 @@ class A2DPConfig {
         A2DPStartLogic startLogic = StartWhenBufferFull;
         A2DPNoData noData = A2DPSilence;
         RxTxMode mode = RX_MODE;
-        const char* name = "A2DP"; 
+        char* name;
         bool auto_reconnect = false;
         int bufferSize = A2DP_BUFFER_SIZE * A2DP_BUFFER_COUNT;
         void (*passthrough_event_callback)(uint8_t, uint8_t) = nullptr;
         QueueHandle_t passthrough_event_queue = xQueueCreate(10, sizeof(esp_avrc_tg_cb_param_t::avrc_tg_psth_cmd_param));
+        QueueHandle_t scan_result_queue = xQueueCreate(10, sizeof(scan_result_msg_t));
 };
 
 
@@ -88,6 +89,10 @@ class A2DPConfig {
 class A2DPStream : public AudioStream {
 
     public:
+        BluetoothA2DPSource *a2dp_source = nullptr;
+        BluetoothA2DPSink *a2dp_sink = nullptr;
+        BluetoothA2DPCommon *a2dp=nullptr;
+
         // Release the allocate a2dp_source or a2dp_sink
         ~A2DPStream(){
             if (a2dp_source!=nullptr) delete a2dp_source;
@@ -126,7 +131,7 @@ class A2DPStream : public AudioStream {
             return *a2dp_sink;
         }
 
-        void begin(RxTxMode mode, const char* name){
+        void begin(RxTxMode mode, char* name){
             A2DPConfig cfg;
             cfg.mode = mode;
             cfg.name = name;
@@ -149,14 +154,9 @@ class A2DPStream : public AudioStream {
                     a2dp_source->set_volume(volume * 100);
                     a2dp_source->set_on_connection_state_changed(a2dpStateCallback, this);
                     a2dp_source->set_passthrough_event_queue(cfg.passthrough_event_queue);
+                    a2dp_source->set_scan_result_queue(cfg.scan_result_queue);
                     a2dp_source->start((char*)cfg.name, a2dp_stream_source_sound_data);  
-                    while(!a2dp_source->is_connected()){
-                        LOGD("waiting for connection");
-                        delay(1000);
-                    }
                     LOGI("a2dp_source is connected...");
-                    notifyBaseInfo(44100);
-                    //is_a2dp_active = true;
                     break;
 
                 case RX_MODE:
@@ -279,12 +279,20 @@ class A2DPStream : public AudioStream {
             audioBaseInfoDependent = &bi;
         }
 
+        /// notify subscriber with AudioBaseInfo
+        void notifyBaseInfo(int rate){
+            if (audioBaseInfoDependent!=nullptr){
+                AudioBaseInfo info;
+                info.channels = 2;
+                info.bits_per_sample = 16;
+                info.sample_rate = rate;
+                audioBaseInfoDependent->setAudioInfo(info);
+            }
+        }
+
 
     protected:
         A2DPConfig config;
-        BluetoothA2DPSource *a2dp_source = nullptr;
-        BluetoothA2DPSink *a2dp_sink = nullptr;
-        BluetoothA2DPCommon *a2dp=nullptr;
         AudioBaseInfoDependent *audioBaseInfoDependent=nullptr;
         float volume = 1.0;
         // semaphore to synchronize acess to the buffer
@@ -384,24 +392,11 @@ class A2DPStream : public AudioStream {
             } 
         }
 
-        /// notify subscriber with AudioBaseInfo
-        void notifyBaseInfo(int rate){
-            if (audioBaseInfoDependent!=nullptr){
-                AudioBaseInfo info;
-                info.channels = 2;
-                info.bits_per_sample = 16;
-                info.sample_rate = rate;
-                audioBaseInfoDependent->setAudioInfo(info);
-            }
-        }
-
         /// callback to update audio info with used a2dp sample rate
         static void sample_rate_callback(uint16_t rate) {
             if (A2DPStream_self->audioBaseInfoDependent!=nullptr){
                 A2DPStream_self->notifyBaseInfo(rate);
             }
         }
-
-};
-
+    };
 }
